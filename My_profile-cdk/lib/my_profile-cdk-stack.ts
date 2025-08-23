@@ -13,7 +13,7 @@ export class MyProfileCdkStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // DNS（Hosted Zone）の作成
+    // DNS（Hosted Zone）の参照
     const dns = new DnsStack(this, "DnsStack", {
       ...dnsStackProperty,
     });
