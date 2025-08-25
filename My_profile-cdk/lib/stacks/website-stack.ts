@@ -6,11 +6,17 @@ import { HostedZoneRef } from "@/lib/stacks/dns-stack";
 import { BucketConstruct } from "@/lib/constructs/website-constructs/bucket-construct";
 import { CdnConstruct } from "@/lib/constructs/website-constructs/cdn-construct";
 
+export interface ApiOriginForContact {
+  domainName: string;
+  originPath: string;
+}
+
 export interface WebsiteStackProps
   extends cdk.StackProps,
     Omit<WebSiteStackProperty, "env"> {
   hostedZoneRef: HostedZoneRef;
   edgeCertificateArn: string;
+  apiOriginForContact: ApiOriginForContact;
 }
 
 export class WebsiteStack extends cdk.Stack {
@@ -44,6 +50,7 @@ export class WebsiteStack extends cdk.Stack {
       contentBucket,
       certificate: edgeCert,
       hostedZone: zone,
+      apiOriginForContact: props.apiOriginForContact,
       ...props.props.contentsDelivery,
     });
 

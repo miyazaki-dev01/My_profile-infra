@@ -1,4 +1,3 @@
-import * as path from "path";
 import { Construct } from "constructs";
 import {
   aws_cloudfront as cf,
@@ -9,11 +8,13 @@ import {
   Duration,
 } from "aws-cdk-lib";
 import { ContentsDeliveryProperty } from "@/parameters/website-parameter";
+import type { ApiOriginForContact } from "@/lib/stacks/website-stack";
 
 export interface CdnConstructProps extends ContentsDeliveryProperty {
   contentBucket: s3.IBucket;
   certificate: import("aws-cdk-lib/aws-certificatemanager").ICertificate;
   hostedZone: r53.IPublicHostedZone;
+  apiOriginForContact: ApiOriginForContact;
 }
 
 export class CdnConstruct extends Construct {
@@ -59,24 +60,46 @@ export class CdnConstruct extends Construct {
     // ディレクトリインデックス補完用の CloudFront Function
     let rewriteFn: cf.Function | undefined = undefined;
     if (props.enableDirectoryIndex === "cf2") {
-      const filePath = path.join(
-        __dirname,
-        "../../functions/cf2-directory-index.js"
-      );
+      const filePath = require.resolve("@/functions/cf2/directory-index.js");
       rewriteFn = new cf.Function(this, "DirectoryIndexFn", {
         code: cf.FunctionCode.fromFile({ filePath }),
       });
     }
 
+    // API Gateway へのオリジン（Contact用）
+    const apiOrigin = new origins.HttpOrigin(
+      props.apiOriginForContact.domainName,
+      {
+        originPath: props.apiOriginForContact.originPath,
+        protocolPolicy: cf.OriginProtocolPolicy.HTTPS_ONLY, // API GW は HTTPS
+      }
+    );
+
+    // API の Preflight に必要なヘッダだけを転送するポリシー
+    const apiCorsOriginRequestPolicy = new cf.OriginRequestPolicy(
+      this,
+      "ApiCorsReqPolicy",
+      {
+        comment: "Forward CORS preflight headers to API",
+        headerBehavior: cf.OriginRequestHeaderBehavior.allowList(
+          "Origin",
+          "Access-Control-Request-Method",
+          "Access-Control-Request-Headers"
+        ),
+        queryStringBehavior: cf.OriginRequestQueryStringBehavior.all(),
+        cookieBehavior: cf.OriginRequestCookieBehavior.none(),
+      }
+    );
+
     // CloudFront Distribution
     this.distribution = new cf.Distribution(this, "Distribution", {
       defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(          // OACでS3を私的アクセス
+        origin: origins.S3BucketOrigin.withOriginAccessControl(            // OACでS3を私的アクセス
           props.contentBucket
         ),
-        viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS, // HTTP→HTTPS
-        responseHeadersPolicy: headers,                                  // セキュリティヘッダ
-        functionAssociations: rewriteFn                                  // ディレクトリ補完
+        viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,   // HTTP→HTTPS
+        responseHeadersPolicy: headers,                                    // セキュリティヘッダ
+        functionAssociations: rewriteFn                                    // ディレクトリ補完
           ? [
               {
                 eventType: cf.FunctionEventType.VIEWER_REQUEST,
@@ -84,15 +107,25 @@ export class CdnConstruct extends Construct {
               },
             ]
           : undefined,
-        compress: true,                                                  // 自動圧縮
-        cachePolicy: defaultCache,                                       // 上記キャッシュ方針
-        allowedMethods: cf.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,        // 読み取り系のみ許可
+        compress: true,                                                    // 自動圧縮
+        cachePolicy: defaultCache,                                         // 上記キャッシュ方針
+        allowedMethods: cf.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,          // 読み取り系のみ許可
       },
-      // TODO: /api/* を API Gateway へプロキシする additionalBehaviors を追加（ALLOW_ALL/CACHING_DISABLED/必要ヘッダ転送）
-      defaultRootObject: "index.html",                                   // ルート(/)はindex.html
-      certificate: props.certificate,                                    // TLS終端
-      domainNames: [props.domainName],                                   // ALTN(CNAME)
-      errorResponses: [                                                  // 403/404は404.htmlへ
+      additionalBehaviors: {
+        "api/*": {
+          origin: apiOrigin,
+          viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS, // HTTPS 強制
+          allowedMethods: cf.AllowedMethods.ALLOW_ALL,                     // POST/OPTIONS 含む
+          cachePolicy: cf.CachePolicy.CACHING_DISABLED,                    // フォームはキャッシュしない
+          originRequestPolicy: apiCorsOriginRequestPolicy,                 // ヘッダ/クッキー/クエリを転送（安全策）
+          responseHeadersPolicy: headers,                                  // 同じセキュリティヘッダ
+          compress: false,                                                 // API は圧縮不要
+        },
+      },
+      defaultRootObject: "index.html",                                     // ルート(/)はindex.html
+      certificate: props.certificate,                                      // TLS終端
+      domainNames: [props.domainName],                                     // ALTN(CNAME)
+      errorResponses: [                                                    // 403/404は404.htmlへ
         {
           httpStatus: 404,
           responseHttpStatus: 404,
@@ -106,9 +139,9 @@ export class CdnConstruct extends Construct {
           ttl: Duration.minutes(5),
         },
       ],
-      priceClass: cf.PriceClass.PRICE_CLASS_200,                         // コスト/性能バランス
-      minimumProtocolVersion: cf.SecurityPolicyProtocol.TLS_V1_2_2021,   // TLS最低バージョン
-      httpVersion: cf.HttpVersion.HTTP3,                                 // HTTP/3対応
+      priceClass: cf.PriceClass.PRICE_CLASS_200,                           // コスト/性能バランス
+      minimumProtocolVersion: cf.SecurityPolicyProtocol.TLS_V1_2_2021,     // TLS最低バージョン
+      httpVersion: cf.HttpVersion.HTTP3,                                   // HTTP/3対応
     });
 
     // Route53の recordName はゾーン相対にする（安全策）
