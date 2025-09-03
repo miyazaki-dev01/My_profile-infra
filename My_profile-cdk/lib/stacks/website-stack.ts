@@ -20,6 +20,9 @@ export interface WebsiteStackProps
 }
 
 export class WebsiteStack extends cdk.Stack {
+  public readonly originBucketName: string;
+  public readonly distributionId: string;
+
   constructor(scope: Construct, id: string, props: WebsiteStackProps) {
     super(scope, id, props);
 
@@ -53,6 +56,10 @@ export class WebsiteStack extends cdk.Stack {
       apiOriginForContact: props.apiOriginForContact,
       ...props.props.contentsDelivery,
     });
+
+    // 各種情報を公開
+    this.originBucketName = contentBucket.bucketName;
+    this.distributionId = cdn.distribution.distributionId;
 
     // --- 結果出力 ---
     new cdk.CfnOutput(this, "SiteDomain", {
