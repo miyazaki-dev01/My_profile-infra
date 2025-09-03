@@ -5,11 +5,13 @@ import { DnsStack } from "@/lib/stacks/dns-stack";
 import { EdgeCertStack } from "@/lib/stacks/edge-cert-stack";
 import { WebsiteStack } from "@/lib/stacks/website-stack";
 import { MailApiStack } from "@/lib/stacks/mail-api-stack";
+import { CicdOidcRoleStack } from "@/lib/stacks/cicd-oidc-role-stack";
 
 import { dnsStackProperty } from "@/parameters/dns-parameter";
 import { edgeCertStackProperty } from "@/parameters/edge-cert-parameter";
 import { websiteStackProperty } from "@/parameters/website-parameter";
 import { mailApiStackProperty } from "@/parameters/mail-parameter";
+import { cicdOidcRoleStackProperty } from "@/parameters/oidc-parameter";
 
 export class MyProfileCdkStage extends cdk.Stage {
   constructor(scope: Construct, id: string, props?: cdk.StageProps) {
@@ -33,7 +35,7 @@ export class MyProfileCdkStage extends cdk.Stage {
     });
 
     // Website（S3 + CloudFront + Route53）
-    new WebsiteStack(this, "WebsiteStack", {
+    const website = new WebsiteStack(this, "WebsiteStack", {
       ...websiteStackProperty,
       hostedZoneRef: dns.hostedZoneRef,
       edgeCertificateArn: edgeCert.certificateArn,
@@ -42,6 +44,13 @@ export class MyProfileCdkStage extends cdk.Stage {
         originPath: `/${mailApi.apiStageName}`,
       },
       crossRegionReferences: true, // CloudFront は us-east-1 で作成されるため、クロスリージョン参照を許可
+    });
+
+    // CICD OIDC Role（GitHub Actions 用 IAM Role）
+    new CicdOidcRoleStack(this, "CicdOidcRoleStack", {
+      ...cicdOidcRoleStackProperty,
+      bucketName: website.originBucketName,
+      distributionId: website.distributionId,
     });
   }
 }
